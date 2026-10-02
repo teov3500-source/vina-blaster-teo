@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VINA BLASTER TEO</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080b12;color:#fff;font-family:Arial,sans-serif;overflow:hidden}
+#wrap{height:100vh;display:flex;flex-direction:column;align-items:center}
+#hud{width:min(1100px,96vw);display:flex;gap:10px;justify-content:space-between;align-items:center;padding:10px 0;flex-wrap:wrap}
+.stat{background:#121826;border:1px solid #283246;border-radius:10px;padding:8px 14px;font-weight:bold}
+#game{background:#0c111b;border:2px solid #27344a;border-radius:14px;box-shadow:0 0 35px #000;width:min(1100px,96vw);height:auto;max-height:calc(100vh - 90px);object-fit:contain}
+#menu{position:fixed;inset:0;background:rgba(3,5,10,.84);display:flex;align-items:center;justify-content:center;z-index:5}
+.panel{width:min(520px,90vw);background:#101725;border:1px solid #34415a;border-radius:20px;padding:28px;text-align:center;box-shadow:0 20px 80px #000}
+h1{font-size:42px;margin:0 0 8px}.sub{color:#aab5c7;margin-bottom:22px}
+button{border:0;border-radius:11px;padding:13px 20px;font-size:16px;font-weight:bold;cursor:pointer;background:#42a5ff;color:#06101d}
+button:hover{filter:brightness(1.1)}.secondary{background:#27344a;color:#fff;margin-left:8px}
+.help{margin-top:18px;color:#9da9bc;font-size:14px;line-height:1.6}
+#mobile{display:none;position:fixed;bottom:15px;left:15px;right:15px;justify-content:space-between;pointer-events:none;z-index:4}
+.pad{display:grid;grid-template-columns:repeat(3,48px);gap:5px;pointer-events:auto}.pad button{padding:0;width:48px;height:48px;background:#182337;color:#fff}
+.pad button:nth-child(1){grid-column:2}.actions{display:flex;gap:8px;pointer-events:auto}.actions button{width:58px;height:58px;padding:0;background:#26344d;color:#fff}
+@media(max-width:700px){#mobile{display:flex}.stat{font-size:13px;padding:7px 10px}.panel h1{font-size:32px}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div class="stat">🎯 Điểm: <span id="score">0</span></div>
+    <div class="stat">🌊 Wave: <span id="wave">1</span></div>
+    <div class="stat">❤️ Máu: <span id="hp">100</span></div>
+    <div class="stat">💰 Tiền: <span id="coins">0</span></div>
+  </div>
+  <canvas id="game" width="1100" height="650"></canvas>
+</div>
+
+<div id="menu">
+  <div class="panel">
+    <h1 id="title">VINA BLASTER TEO</h1>
+    <div class="sub" id="message">Game bắn súng arcade độc quyền của TEO.</div>
+    <button id="start">▶ BẮT ĐẦU</button>
+    <button id="restart" class="secondary">↻ CHƠI LẠI</button>
+    <div class="help">
+      <b>PC:</b> WASD / phím mũi tên để di chuyển · chuột để ngắm · giữ chuột để bắn<br>
+      <b>Điện thoại:</b> dùng nút điều khiển phía dưới
+    </div>
+  </div>
+</div>
+
+<div id="mobile">
+  <div class="pad">
+    <button data-key="w">▲</button><button data-key="a">◀</button>
+    <button data-key="s">▼</button><button data-key="d">▶</button>
+  </div>
+  <div class="actions"><button id="mobileFire">🔫</button></div>
+</div>
+
+<script>
+(() => {
+const c=document.getElementById("game"),ctx=c.getContext("2d");
+const scoreEl=document.getElementById("score"),waveEl=document.getElementById("wave");
+const hpEl=document.getElementById("hp"),coinsEl=document.getElementById("coins");
+const menu=document.getElementById("menu"),title=document.getElementById("title"),message=document.getElementById("message");
+let keys={},mouse={x:550,y:325,down:false},running=false,gameOver=false,last=0,spawnTimer=0;
+let score=0,wave=1,coins=0,player,enemies=[],bullets=[],particles=[],pickups=[],shake=0;
+
+function reset(){
+ player={x:c.width/2,y:c.height/2,r:17,speed:285,hp:100,maxHp:100,damage:1,fireRate:.16,cool:0};
+ enemies=[];bullets=[];particles=[];pickups=[];score=0;wave=1;coins=0;spawnTimer=0;shake=0;running=false;gameOver=false;
+ updateHud(); draw();
+}
+function updateHud(){
+ scoreEl.textContent=score;waveEl.textContent=wave;hpEl.textContent=Math.max(0,Math.ceil(player.hp));coinsEl.textContent=coins;
+}
+function pos(e){const r=c.getBoundingClientRect();mouse.x=(e.clientX-r.left)*c.width/r.width;mouse.y=(e.clientY-r.top)*c.height/r.height}
+c.addEventListener("pointermove",pos);
+c.addEventListener("pointerdown",e=>{mouse.down=true;pos(e)});
+window.addEventListener("pointerup",()=>mouse.down=false);
+window.addEventListener("keydown",e=>{keys[e.key.toLowerCase()]=true;if(e.key===" ")e.preventDefault()});
+window.addEventListener("keyup",e=>{keys[e.key.toLowerCase()]=false});
+
+document.querySelectorAll("[data-key]").forEach(b=>{
+ const k=b.dataset.key;
+ const on=e=>{e.preventDefault();keys[k]=true},off=e=>{e.preventDefault();keys[k]=false};
+ b.addEventListener("pointerdown",on);b.addEventListener("pointerup",off);b.addEventListener("pointerleave",off);
+});
+const mf=document.getElementById("mobileFire");
+mf.addEventListener("pointerdown",e=>{e.preventDefault();mouse.down=true});
+mf.addEventListener("pointerup",()=>mouse.down=false);
+mf.addEventListener("pointerleave",()=>mouse.down=false);
+
+function rand(a,b){return Math.random()*(b-a)+a}
+function spawnEnemy(){
+ let side=Math.floor(Math.random()*4),x,y;
+ if(side===0){x=-30;y=rand(0,c.height)} else if(side===1){x=c.width+30;y=rand(0,c.height)}
+ else if(side===2){x=rand(0,c.width);y=-30}else{x=rand(0,c.width);y=c.height+30}
+ const types=[
+  {r:16,hp:1,s:70+wave*4,val:10,coin:5},
+  {r:23,hp:3,s:45+wave*3,val:25,coin:12}
+ ];
+ const t=Math.random()<Math.min(.25,wave*.025)?types[1]:types[0];
+ enemies.push({x,y,r:t.r,hp:t.hp,speed:t.s,val:t.val,coin:t.coin});
+}
+function shoot(){
+ if(player.cool>0)return;
+ const a=Math.atan2(mouse.y-player.y,mouse.x-player.x);
+ bullets.push({x:player.x+Math.cos(a)*22,y:player.y+Math.sin(a)*22,
+ vx:Math.cos(a)*720,vy:Math.sin(a)*720,r:5,damage:player.damage});
+ player.cool=player.fireRate;
+}
+function burst(x,y,n=12){
+ for(let i=0;i<n;i++){let a=Math.random()*Math.PI*2,s=rand(40,180);
+  particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,t:rand(.2,.55)});
+ }
+}
+function update(dt){
+ if(!running)return;
+ let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0);
+ let dy=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);
+ let len=Math.hypot(dx,dy)||1;
+ player.x=Math.max(player.r,Math.min(c.width-player.r,player.x+dx/len*player.speed*dt));
+ player.y=Math.max(player.r,Math.min(c.height-player.r,player.y+dy/len*player.speed*dt));
+ player.cool=Math.max(0,player.cool-dt);
+ if(mouse.down||keys[" "])shoot();
+
+ spawnTimer-=dt;
+ if(spawnTimer<=0){
+   spawnEnemy();
+   spawnTimer=Math.max(.2,1.0-wave*.035);
+ }
+ if(score>=wave*200)wave++;
+
+ for(const b of bullets){b.x+=b.vx*dt;b.y+=b.vy*dt}
+ bullets=bullets.filter(b=>b.x>-40&&b.x<c.width+40&&b.y>-40&&b.y<c.height+40);
+
+ for(const e of enemies){
+   const a=Math.atan2(player.y-e.y,player.x-e.x),d=Math.hypot(player.x-e.x,player.y-e.y);
+   e.x+=Math.cos(a)*e.speed*dt;e.y+=Math.sin(a)*e.speed*dt;
+   if(d<e.r+player.r){player.hp-=28*dt;shake=3}
+ }
+ for(const b of bullets){
+   for(const e of enemies){
+     if(Math.hypot(b.x-e.x,b.y-e.y)<b.r+e.r){
+       e.hp-=b.damage;b.x=-999;
+       if(e.hp<=0){
+         score+=e.val;coins+=e.coin;burst(e.x,e.y);
+         if(Math.random()<.08)pickups.push({x:e.x,y:e.y,r:9,type:"heal"});
+       }
+       break;
+     }
+   }
+ }
+ enemies=enemies.filter(e=>e.hp>0);
+
+ for(const p of pickups){
+   if(Math.hypot(player.x-p.x,player.y-p.y)<player.r+p.r){
+     if(p.type==="heal")player.hp=Math.min(player.maxHp,player.hp+20);
+     p.dead=true;
+   }
+ }
+ pickups=pickups.filter(p=>!p.dead);
+
+ for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.t-=dt}
+ particles=particles.filter(p=>p.t>0);
+ shake=Math.max(0,shake-dt*12);
+
+ if(player.hp<=0){
+   player.hp=0;running=false;gameOver=true;
+   title.textContent="GAME OVER";message.textContent="Bạn đạt "+score+" điểm và "+coins+" tiền.";
+   menu.style.display="flex";
+ }
+ updateHud();
+}
+function draw(){
+ ctx.clearRect(0,0,c.width,c.height);
+ ctx.fillStyle="#0c111b";ctx.fillRect(0,0,c.width,c.height);
+ ctx.strokeStyle="#172234";ctx.lineWidth=1;
+ for(let x=0;x<c.width;x+=44){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,c.height);ctx.stroke()}
+ for(let y=0;y<c.height;y+=44){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(c.width,y);ctx.stroke()}
+ ctx.save();
+ if(shake)ctx.translate(rand(-shake,shake),rand(-shake,shake));
+
+ for(const p of pickups){ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle="#65e6a5";ctx.fill();ctx.font="12px Arial";ctx.fillStyle="#fff";ctx.textAlign="center";ctx.fillText("+",p.x,p.y+4)}
+ for(const b of bullets){ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fillStyle="#fff";ctx.fill()}
+ for(const e of enemies){
+   ctx.beginPath();ctx.arc(e.x,e.y,e.r,0,Math.PI*2);ctx.fillStyle=e.r>20?"#c66cff":"#ff4f6d";ctx.fill();
+   ctx.strokeStyle="#fff";ctx.stroke();
+ }
+ const a=Math.atan2(mouse.y-player.y,mouse.x-player.x);
+ ctx.save();ctx.translate(player.x,player.y);ctx.rotate(a);
+ ctx.fillStyle="#63c8ff";ctx.fillRect(4,-6,30,12);ctx.restore();
+ ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fillStyle="#26a9ff";ctx.fill();ctx.strokeStyle="#fff";ctx.stroke();
+
+ for(const p of particles){ctx.globalAlpha=Math.max(0,p.t/.55);ctx.fillStyle="#ffd166";ctx.fillRect(p.x,p.y,4,4)}
+ ctx.globalAlpha=1;
+ ctx.restore();
+
+ if(running){
+   const barW=90,ratio=player.hp/player.maxHp;
+   ctx.fillStyle="#222";ctx.fillRect(player.x-barW/2,player.y-player.r-14,barW,6);
+   ctx.fillStyle="#5ee68a";ctx.fillRect(player.x-barW/2,player.y-player.r-14,barW*ratio,6);
+ }
+}
+function loop(t){
+ const dt=Math.min(.035,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(loop);
+}
+document.getElementById("start").onclick=()=>{running=true;menu.style.display="none"};
+document.getElementById("restart").onclick=()=>{reset();running=true;menu.style.display="none"};
+reset();requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
